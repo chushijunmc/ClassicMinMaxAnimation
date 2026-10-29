@@ -164,29 +164,56 @@ static DWORD RunHidden(const std::wstring& cmd)
 
 static bool IsAutostartEnabled()
 {
-    std::wstring q = L"cmd";
-    (void)q;
     std::wstring cmd = L"schtasks.exe /Query /TN \"";
     cmd += kTaskName;
     cmd += L"\"";
-    return RunHidden(cmd) == 0;
+    if (RunHidden(cmd) == 0)
+        return true;
+
+    /* Win7 上 /Query 的结果不可靠，创建成功时同时记一个标记 */
+    return RegGetDword(L"Autostart", 0) != 0;
+}
+
+/* Win7 的 schtasks 对 /TR 里的嵌套引号处理有差异，这里按兼容性依次尝试三种写法 */
+static bool CreateLogonTask(const std::wstring& exe)
+{
+    static const wchar_t* kFmt[] = {
+        L"schtasks.exe /Create /TN \"%s\" /TR \"\\\"%s\\\"\" /SC ONLOGON /RL HIGHEST /F",
+        L"schtasks.exe /Create /TN \"%s\" /TR \"'%s'\" /SC ONLOGON /RL HIGHEST /F",
+        L"schtasks.exe /Create /TN \"%s\" /TR \"%s\" /SC ONLOGON /RL HIGHEST /F",
+    };
+
+    WCHAR szCmd[1024];
+    for (int i = 0; i < ARRAYSIZE(kFmt); i++)
+    {
+        _snwprintf_s(szCmd, _TRUNCATE, kFmt[i], kTaskName, exe.c_str());
+        DWORD code = RunHidden(szCmd);
+        DbgLog("create task variant %d exit=%ld", i + 1, (long)code);
+        if (code == 0)
+            return true;
+    }
+    return false;
 }
 
 static void SetAutostart(bool on)
 {
-    std::wstring exe;
     WCHAR szPath[MAX_PATH];
     GetModuleFileNameW(nullptr, szPath, ARRAYSIZE(szPath));
-    exe = szPath;
 
     if (on)
     {
-        std::wstring cmd = L"schtasks.exe /Create /TN \"";
-        cmd += kTaskName;
-        cmd += L"\" /TR \"\\\"";
-        cmd += exe;
-        cmd += L"\\\"\" /SC ONLOGON /RL HIGHEST /F";
-        RunHidden(cmd);
+        if (CreateLogonTask(szPath))
+        {
+            RegSetDword(L"Autostart", 1);
+            return;
+        }
+
+        RegSetDword(L"Autostart", 0);
+        MessageBoxW(nullptr,
+                    L"创建开机自启计划任务失败（schtasks 返回错误）。\n\n"
+                    L"请用管理员命令提示符执行下面的命令，把错误信息发给我们：\n"
+                    L"schtasks /Create /TN ClassicMinMax /TR \"程序完整路径\" /SC ONLOGON /RL HIGHEST /F",
+                    L"ClassicMinMax", MB_ICONWARNING);
     }
     else
     {
@@ -194,6 +221,7 @@ static void SetAutostart(bool on)
         cmd += kTaskName;
         cmd += L"\" /F";
         RunHidden(cmd);
+        RegSetDword(L"Autostart", 0);
     }
 }
 
