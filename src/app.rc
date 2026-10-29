@@ -1,0 +1,4 @@
+// ClassicMinMax 程序资源
+// 图标由 res\app.ico 提供（多尺寸：16/20/24/32/40/48/64/96/128/256）
+
+101 ICON "..\\res\\app.ico"
